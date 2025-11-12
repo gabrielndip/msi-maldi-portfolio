@@ -1,0 +1,157 @@
+---
+title: "MSI MALDI Portfolio Workflow"
+author: ""
+date: "`r format(Sys.Date(), '%Y-%m-%d')`"
+format:
+  html:
+    toc: true
+    toc_depth: 3
+  pdf:
+    toc: true
+editor_options: 
+  chunk_output_type: console
+---
+
+# Introduction
+
+This document outlines the complete workflow for processing and analyzing a
+MALDI mass‑spectrometry imaging (MSI) dataset.  
+
+The overall goal is to load raw MSI data, perform a series of preprocessing
+steps (normalisation, peak picking, alignment and filtering), inspect and
+visualise the data, optionally crop a region of interest (ROI), carry out
+spatial segmentation and principal component analysis, and finish with
+optional downstream analyses.  Each major step is encapsulated in a separate
+script and sourced in this Quarto document for clarity and reproducibility.
+
+## Data and project structure
+
+The data directory contains the following files:
+
+```
+data
+├── MB001-040_pos.tif          # Optical scan of the tissue section
+├── N-glycan_RScript.docx       # Original analysis notes
+├── README.txt                  # Dataset description
+├── cal-nonormalization.ibd     # Binary data for the calibrant region
+├── cal-nonormalization.imzML   # Metadata for the calibrant region
+├── control-nonormalization.ibd # Binary data for the control region
+├── control-nonormalization.imzML
+├── png1-nonormalization.ibd    # Binary data for treated region 1
+├── png1-nonormalization.imzML
+├── png2-nonormalization.ibd    # Binary data for treated region 2
+└── png2-nonormalization.imzML
+```
+
+## Workflow overview
+
+Each of the following sections sources an R script from the `scripts/`
+directory.  The scripts are created separately and contain the
+code required to execute each step.  The Quarto document executes
+the scripts sequentially when rendered.  If you modify script file names, 
+update the paths accordingly.
+
+# Data loading
+
+Load the raw imzML and ibd files into a Cardinal `MSImageSet` object.
+
+```{r load-data, echo=TRUE, message=FALSE, warning=FALSE}
+source("scripts/01_load_data.R")
+```
+
+# Preprocessing
+
+Perform total‑ion current (TIC) normalization, peak picking, alignment and
+filtering. Adjust thresholds and tolerances within the script as required.
+
+```{r preprocess-data, echo=TRUE, message=FALSE, warning=FALSE}
+source("scripts/02_preprocess_data.R")
+```
+
+# Quality control and exploration
+
+Generate diagnostic plots, ion images and spectrum views to
+assess data quality both before and after preprocessing.
+
+```{r explore-data, echo=TRUE, message=FALSE, warning=FALSE}
+source("scripts/03_explore_data.R")
+```
+
+# ROI selection and cropping
+
+Optionally crop the dataset to a region of interest.  This step is
+useful for speeding up exploration or focusing on a particular
+anatomical area.  If you prefer to analyse the full dataset, you may
+omit this section.
+
+```{r roi-crop, echo=TRUE, message=FALSE, warning=FALSE}
+source("scripts/04_roi_crop.R")
+```
+
+# Segmentation: Identifying Molecular Regions
+
+This step partitions the image into distinct molecular regions based on
+spectral similarity. We will apply and compare three different clustering
+methods to understand the benefits of spatially-aware algorithms.
+
+The script `05_ssc_segmentation.R` now performs two main tasks:
+1.  **Optimizing `k`**: It first runs the Spatial Shrunken Centroids (SSC)
+    algorithm for a range of `k` values (number of segments), plotting each
+    result to help us choose a `k` that best fits the data's complexity.
+2.  **Comparing Methods**: For a fixed `k`, it generates a side-by-side
+    comparison of three methods:
+    - **Spatial Shrunken Centroids (SSC)**: A sophisticated method that
+      incorporates spatial smoothing and performs feature selection.
+    - **Spatial K-Means (SKM)**: A faster spatial method that adds a
+      smoothing penalty to the standard k-means algorithm.
+    - **K-Means (non-spatial)**: Standard k-means clustering performed on
+      the PCA scores, used here as a baseline.
+
+```{r segmentation, echo=TRUE, message=FALSE, warning=FALSE}
+source("scripts/05_ssc_segmentation.R")
+```
+
+### Interpreting the Results
+
+The code chunk above will produce two sets of plots:
+
+1.  **SSC Results (Varying k)**: This plot shows the tissue segmentation for
+    each `k` value tested. By visually inspecting these images, you can choose
+    a `k` that appears to best capture the underlying anatomical structures
+    without over-segmenting the tissue into noisy, meaningless regions.
+
+2.  **Segmentation Method Comparison**: This 3-panel plot directly contrasts
+    the output of SSC, SKM, and non-spatial K-Means. You will likely observe
+    that the K-Means result has a noisy, "salt-and-pepper" appearance. In
+    contrast, the SKM and SSC results should appear much smoother and more
+    contiguous, as these algorithms penalize solutions where neighboring
+-   pixels are assigned to different clusters. This demonstrates the power
+    of including spatial information in the clustering process.
+
+
+# Principal component analysis (PCA)
+
+Perform dimensionality reduction (e.g. PCA) to extract dominant
+spectral patterns and visualize spatial loadings.
+
+```{r pca-analysis, echo=TRUE, message=FALSE, warning=FALSE}
+source("scripts/06_pca_analysis.R")
+```
+
+# Additional analyses
+
+Include any extra analyses not covered above, such as t‑SNE/UMAP,
+supervised classification, co‑localisation networks or
+annotation-based exploration.  Create additional scripts as required
+and source them here.
+
+```{r extra-analysis, echo=TRUE, message=FALSE, warning=FALSE}
+source("scripts/07_extra_analysis.R")
+```
+
+# Conclusions
+
+Summarise your findings from each analysis step and discuss any
+biological interpretations or follow‑up questions.  This section can
+also document challenges encountered and potential improvements for
+future analyses.

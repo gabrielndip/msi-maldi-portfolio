@@ -1,0 +1,19 @@
+# Data files
+data/
+*.imzML
+*.ibd
+
+# Generated files
+*.html
+msi_maldi_portfolio_workflow_files/
+
+# R temporary files
+.Rhistory
+.RData
+.RDataTmp
+
+# macOS files
+.DS_Store
+
+# TIF file
+*.tif
