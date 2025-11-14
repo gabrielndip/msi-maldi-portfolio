@@ -94,7 +94,7 @@ plot_spatially_ranked_images <- function(msi_obj, n = 3) {
 ## --------------------------------------------------------------------
 
 # Iterate over each dataset to generate and save plots.
-purr::iwalk(msi_data, function(raw_msi, name) {
+purrr::iwalk(msi_data, function(raw_msi, name) {
   proc_name <- paste0(name, "_proc")
   if (!proc_name %in% names(msi_preprocessed)) {
     warning("No processed dataset found for ", name, " – skipping.")
