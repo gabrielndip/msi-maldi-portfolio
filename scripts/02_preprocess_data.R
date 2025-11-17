@@ -52,7 +52,7 @@ preprocess_msi <- function(msi) {
     
     # Filter peaks. Here, we remove peaks that are present in fewer than
     # 1% of the pixels (freq.min = 0.01).
-    peakFilter(freq.min = 0.01, rm.zero = TRUE) %>%
+    peakFilter(freq.min = 0.01) %>%
     
     # Execute the queued processing steps.
     process()
@@ -75,6 +75,25 @@ msi_preprocessed <- msi_data %>%
 
 # Assign processed datasets into the global environment.
 list2env(msi_preprocessed, envir = .GlobalEnv)
+
+# Summarise the effect of preprocessing so Quarto can surface a table of
+# how many peaks/pixels were retained for each dataset.
+msi_preprocessing_summary <- purrr::imap_dfr(msi_data, function(raw_msi, dataset_name) {
+  proc_name <- paste0(dataset_name, "_proc")
+  proc_msi <- msi_preprocessed[[proc_name]]
+  tibble(
+    dataset = dataset_name,
+    raw_pixels = ncol(spectra(raw_msi)),
+    raw_features = nrow(spectra(raw_msi)),
+    processed_pixels = if (!is.null(proc_msi)) ncol(spectra(proc_msi)) else NA_integer_,
+    processed_features = if (!is.null(proc_msi)) nrow(spectra(proc_msi)) else NA_integer_
+  ) %>%
+    mutate(
+      pixel_delta = raw_pixels - processed_pixels,
+      feature_delta = raw_features - processed_features
+    )
+})
+assign("msi_preprocessing_summary", msi_preprocessing_summary, envir = .GlobalEnv)
 
 message(
   "Preprocessing complete. New objects: ",

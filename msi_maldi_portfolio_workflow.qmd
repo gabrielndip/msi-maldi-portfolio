@@ -6,29 +6,32 @@ format:
   html:
     toc: true
     toc_depth: 3
-  pdf:
-    toc: true
+    code-fold: true
 editor_options: 
   chunk_output_type: console
+editor: 
+  markdown: 
+    wrap: 72
 ---
 
 # Introduction
 
-This document outlines the complete workflow for processing and analyzing a
-MALDI mass‑spectrometry imaging (MSI) dataset.  
+This document outlines the complete workflow for processing and
+analyzing a MALDI mass‑spectrometry imaging (MSI) dataset.
 
-The overall goal is to load raw MSI data, perform a series of preprocessing
-steps (normalisation, peak picking, alignment and filtering), inspect and
-visualise the data, optionally crop a region of interest (ROI), carry out
-spatial segmentation and principal component analysis, and finish with
-optional downstream analyses.  Each major step is encapsulated in a separate
-script and sourced in this Quarto document for clarity and reproducibility.
+The overall goal is to load raw MSI data, perform a series of
+preprocessing steps (normalisation, peak picking, alignment and
+filtering), inspect and visualise the data, optionally crop a region of
+interest (ROI), carry out spatial segmentation and principal component
+analysis, and finish with optional downstream analyses. Each major step
+is encapsulated in a separate script and sourced in this Quarto document
+for clarity and reproducibility.
 
 ## Data and project structure
 
 The data directory contains the following files:
 
-```
+```         
 data
 ├── MB001-040_pos.tif          # Optical scan of the tissue section
 ├── N-glycan_RScript.docx       # Original analysis notes
@@ -46,112 +49,360 @@ data
 ## Workflow overview
 
 Each of the following sections sources an R script from the `scripts/`
-directory.  The scripts are created separately and contain the
-code required to execute each step.  The Quarto document executes
-the scripts sequentially when rendered.  If you modify script file names, 
-update the paths accordingly.
+directory. The scripts are created separately and contain the code
+required to execute each step. The Quarto document executes the scripts
+sequentially when rendered. If you modify script file names, update the
+paths accordingly. Tables and figures will also be saved in `tables/`
+and `figures/`, respectively.
 
 # Data loading
 
 Load the raw imzML and ibd files into a Cardinal `MSImageSet` object.
 
-```{r load-data, echo=TRUE, message=FALSE, warning=FALSE}
+```{r load-data, echo=TRUE, message=FALSE, warning=FALSE, results='hide'}
 source("scripts/01_load_data.R")
+```
+
+```{r load-data-summary, echo=FALSE}
+if (exists("msi_dataset_overview", inherits = TRUE)) {
+  knitr::kable(
+    msi_dataset_overview,
+    caption = "Loaded MSI datasets and spectral coverage."
+  )
+}
 ```
 
 # Preprocessing
 
-Perform total‑ion current (TIC) normalization, peak picking, alignment and
-filtering. Adjust thresholds and tolerances within the script as required.
+Perform total‑ion current (TIC) normalization, peak picking, alignment
+and filtering. Adjust thresholds and tolerances within the script as
+required.
 
-```{r preprocess-data, echo=TRUE, message=FALSE, warning=FALSE}
+```{r preprocess-data, echo=TRUE, message=FALSE, warning=FALSE, results='hide'}
 source("scripts/02_preprocess_data.R")
+```
+
+```{r preprocessing-summary, echo=FALSE, eval=TRUE}
+if (exists("msi_preprocessing_summary", inherits = TRUE)) {
+  prep_tbl <- transform(
+    msi_preprocessing_summary,
+    feature_delta = raw_features - processed_features,
+    pixel_delta = raw_pixels - processed_pixels
+  )
+  knitr::kable(
+    prep_tbl,
+    caption = "Effect of preprocessing on pixel/feature counts."
+  )
+}
 ```
 
 # Quality control and exploration
 
-Generate diagnostic plots, ion images and spectrum views to
-assess data quality both before and after preprocessing.
+Generate diagnostic plots, ion images and spectrum views to assess data
+quality both before and after preprocessing.
 
-```{r explore-data, echo=TRUE, message=FALSE, warning=FALSE}
+```{r explore-data, echo=TRUE, message=FALSE, warning=FALSE, results='hide'}
 source("scripts/03_explore_data.R")
+```
+
+```{r qc-top-features, echo=FALSE}
+if (exists("msi_qc_spatial_features", inherits = TRUE) &&
+    length(msi_qc_spatial_features) > 0) {
+  spatial_tbl <- tibble::enframe(msi_qc_spatial_features, name = "dataset", value = "mz_values")
+  spatial_tbl$top_spatial_mz <- purrr::map_chr(spatial_tbl$mz_values, ~ paste(.x, collapse = ", "))
+  spatial_tbl$mz_values <- NULL
+  knitr::kable(spatial_tbl, caption = "Top spatially structured m/z values per dataset.")
+}
+```
+
+```{r qc-figures, echo=FALSE, results='asis'}
+if (!exists("msi_qc_plots", inherits = TRUE) ||
+    length(msi_qc_plots) == 0) {
+  qc_dir <- file.path("figures", "qc")
+  if (dir.exists(qc_dir)) {
+    qc_files <- list.files(
+      qc_dir,
+      pattern = "_qc_(tic|spectra|spatial)\\.png$",
+      full.names = TRUE
+    )
+    if (length(qc_files) > 0) {
+      qc_df <- tibble::tibble(
+        file = qc_files,
+        dataset = gsub("_qc_.*$", "", basename(qc_files)),
+        panel = gsub("^.*_qc_(tic|spectra|spatial)\\.png$", "\\1", basename(qc_files))
+      )
+      qc_split <- split(qc_df, qc_df$dataset)
+      msi_qc_plots <- purrr::map(qc_split, function(df) {
+        list(
+          tic = df$file[df$panel == "tic"][1],
+          spectra = df$file[df$panel == "spectra"][1],
+          spatial = df$file[df$panel == "spatial"][1]
+        )
+      })
+    }
+  }
+}
+if (exists("msi_qc_plots", inherits = TRUE) && length(msi_qc_plots) > 0) {
+  render_img <- function(path) {
+    if (!is.null(path) && file.exists(path)) {
+      cat(sprintf("![](%s)\n\n", knitr::image_uri(path)))
+      return(TRUE)
+    }
+    return(FALSE)
+  }
+
+  purrr::iwalk(msi_qc_plots, function(paths, dataset_name) {
+    cat(sprintf("### QC Report for %s\n\n", dataset_name))
+    
+    tic_shown <- render_img(paths$tic)
+    spectra_shown <- render_img(paths$spectra)
+    spatial_shown <- render_img(paths$spatial)
+
+    # Fallback for legacy single-panel QC images if per-panel files are missing.
+    if (!tic_shown && !spectra_shown && !spatial_shown) {
+      legacy_path <- file.path("figures", "qc", paste0(dataset_name, "_qc.png"))
+      if (render_img(legacy_path)) {
+        cat("\n")
+      }
+    }
+  })
+} else {
+  cat("*(QC figures will appear after generating them in the quality control chunk.)*")
+}
 ```
 
 # ROI selection and cropping
 
-Optionally crop the dataset to a region of interest.  This step is
-useful for speeding up exploration or focusing on a particular
-anatomical area.  If you prefer to analyse the full dataset, you may
-omit this section.
+Optionally crop the dataset to a region of interest. This step is useful
+for speeding up exploration or focusing on a particular anatomical area.
+If you prefer to analyse the full dataset, you may omit this section.
 
-```{r roi-crop, echo=TRUE, message=FALSE, warning=FALSE}
+```{r roi-crop, echo=TRUE, message=FALSE, warning=FALSE, results='hide'}
 source("scripts/04_roi_crop.R")
+```
+
+```{r roi-summary, echo=FALSE}
+if (exists("msi_roi_summary", inherits = TRUE)) {
+  knitr::kable(
+    msi_roi_summary,
+    caption = "Pixel counts before and after ROI cropping."
+  )
+}
 ```
 
 # Segmentation: Identifying Molecular Regions
 
 This step partitions the image into distinct molecular regions based on
-spectral similarity. We will apply and compare three different clustering
-methods to understand the benefits of spatially-aware algorithms.
+spectral similarity. We will apply and compare three different
+clustering methods to understand the benefits of spatially-aware
+algorithms.
 
-The script `05_ssc_segmentation.R` now performs two main tasks:
-1.  **Optimizing `k`**: It first runs the Spatial Shrunken Centroids (SSC)
-    algorithm for a range of `k` values (number of segments), plotting each
-    result to help us choose a `k` that best fits the data's complexity.
+The script `05_ssc_segmentation.R` performs two main tasks:
+
+1.  **Optimizing `k`**: It first runs the Spatial Shrunken Centroids
+    (SSC) algorithm for a range of `k` values (number of segments),
+    plotting each result to help us choose a `k` that best fits the
+    data's complexity.
+
 2.  **Comparing Methods**: For a fixed `k`, it generates a side-by-side
     comparison of three methods:
-    - **Spatial Shrunken Centroids (SSC)**: A sophisticated method that
-      incorporates spatial smoothing and performs feature selection.
-    - **Spatial K-Means (SKM)**: A faster spatial method that adds a
-      smoothing penalty to the standard k-means algorithm.
-    - **K-Means (non-spatial)**: Standard k-means clustering performed on
-      the PCA scores, used here as a baseline.
 
-```{r segmentation, echo=TRUE, message=FALSE, warning=FALSE}
+    -   **Spatial Shrunken Centroids (SSC)**: A method that 
+    incorporates spatial smoothing and performs feature
+        selection.
+
+    -   **Spatial K-Means (SKM)**: A faster spatial method that adds a
+        smoothing penalty to the standard k-means algorithm.
+
+    -   **K-Means (non-spatial)**: Standard k-means clustering performed
+        on the PCA scores, used here as a baseline.
+
+```{r segmentation, echo=TRUE, message=FALSE, warning=FALSE, results='hide'}
 source("scripts/05_ssc_segmentation.R")
+```
+
+```{r segmentation-summary, echo=FALSE}
+if (exists("msi_segmentation_summary", inherits = TRUE) &&
+    nrow(msi_segmentation_summary) > 0) {
+  knitr::kable(
+    msi_segmentation_summary,
+    caption = "Segmentation sweep parameters and comparison coverage."
+  )
+}
+```
+
+```{r segmentation-figures, echo=FALSE, results='asis'}
+emit_seg_fig <- function(title, path) {
+  if (is.null(path) || !file.exists(path)) return()
+  img_uri <- knitr::image_uri(path)
+  cat(sprintf("#### %s\n\n![](%s)\n\n", title, img_uri))
+}
+if (exists("msi_segmentation_plots", inherits = TRUE) &&
+    length(msi_segmentation_plots) > 0) {
+  sweep_paths <- msi_segmentation_plots[grepl("_ssc_grid$", names(msi_segmentation_plots))]
+  comparison_paths <- msi_segmentation_plots[grepl("_comparison$", names(msi_segmentation_plots))]
+  if (length(sweep_paths) > 0) {
+    cat("### SSC k-sweep panels\n\n")
+    purrr::iwalk(sweep_paths, function(path, label) emit_seg_fig(label, path))
+  }
+  if (length(comparison_paths) > 0) {
+    cat("### Method comparison panels\n\n")
+    purrr::iwalk(comparison_paths, function(path, label) emit_seg_fig(label, path))
+  }
+} else {
+  cat("*(Segmentation figures are available after running the segmentation chunk.)*")
+}
 ```
 
 ### Interpreting the Results
 
 The code chunk above will produce two sets of plots:
 
-1.  **SSC Results (Varying k)**: This plot shows the tissue segmentation for
-    each `k` value tested. By visually inspecting these images, you can choose
-    a `k` that appears to best capture the underlying anatomical structures
-    without over-segmenting the tissue into noisy, meaningless regions.
+1.  **SSC Results (Varying k)**: This plot shows the tissue segmentation
+    for each `k` value tested. By visually inspecting these images, you
+    can choose a `k` that appears to best capture the underlying
+    anatomical structures without over-segmenting the tissue into noisy,
+    meaningless regions.
 
-2.  **Segmentation Method Comparison**: This 3-panel plot directly contrasts
-    the output of SSC, SKM, and non-spatial K-Means. You will likely observe
-    that the K-Means result has a noisy, "salt-and-pepper" appearance. In
-    contrast, the SKM and SSC results should appear much smoother and more
-    contiguous, as these algorithms penalize solutions where neighboring
--   pixels are assigned to different clusters. This demonstrates the power
-    of including spatial information in the clustering process.
-
+2.  **Segmentation Method Comparison**: This 3-panel plot directly
+    contrasts the output of SSC, SKM, and non-spatial K-Means. You will
+    likely observe that the K-Means result has a noisy,
+    "salt-and-pepper" appearance. In contrast, the SKM and SSC results
+    should appear much smoother and more contiguous, as these algorithms
+    penalize solutions where neighboring pixels are assigned to 
+    different clusters. This demonstrates the power of including 
+    spatial information in the clustering process.
 
 # Principal component analysis (PCA)
 
-Perform dimensionality reduction (e.g. PCA) to extract dominant
-spectral patterns and visualize spatial loadings.
+Perform dimensionality reduction (e.g. PCA) to extract dominant spectral
+patterns and visualize spatial loadings.
 
-```{r pca-analysis, echo=TRUE, message=FALSE, warning=FALSE}
+```{r pca-analysis, echo=TRUE, message=TRUE, warning=FALSE, eval=FALSE}
 source("scripts/06_pca_analysis.R")
+```
+
+```{r pca-figures, echo=FALSE, results='asis', eval=FALSE}
+emit_pca_fig <- function(title, path) {
+  cat(sprintf("#### %s\n\n![](%s)\n\n", title, path))
+}
+if (exists("msi_pca_score_paths", inherits = TRUE) &&
+    length(msi_pca_score_paths) > 0) {
+  cat("### PCA score maps\n\n")
+  purrr::iwalk(msi_pca_score_paths, function(path, label) emit_pca_fig(label, path))
+}
+if (exists("msi_pca_loading_paths", inherits = TRUE) &&
+    length(msi_pca_loading_paths) > 0) {
+  cat("### PCA loading spectra\n\n")
+  purrr::iwalk(msi_pca_loading_paths, function(path, label) emit_pca_fig(label, path))
+} else {
+  cat("*(PCA figure panels will display after running the PCA analysis chunk.)*")
+}
+```
+
+```{r pca-summary, echo=FALSE, eval=FALSE}
+if (exists("msi_pca_loading_summary", inherits = TRUE) &&
+    nrow(msi_pca_loading_summary) > 0) {
+  knitr::kable(
+    msi_pca_loading_summary,
+    caption = "Representative m/z drivers per principal component."
+  )
+}
 ```
 
 # Additional analyses
 
 Include any extra analyses not covered above, such as t‑SNE/UMAP,
-supervised classification, co‑localisation networks or
-annotation-based exploration.  Create additional scripts as required
-and source them here.
+supervised classification, co‑localisation networks or annotation-based
+exploration. Create additional scripts as required and source them here.
 
-```{r extra-analysis, echo=TRUE, message=FALSE, warning=FALSE}
+```{r extra-analysis, echo=TRUE, message=TRUE, warning=FALSE, eval=FALSE}
 source("scripts/07_extra_analysis.R")
+```
+
+```{r extra-analysis-output, echo=FALSE, results='asis', eval=FALSE}
+emit_extra_fig <- function(title, path) {
+  cat(sprintf("#### %s\n\n![](%s)\n\n", title, path))
+}
+if (exists("msi_manifold_paths", inherits = TRUE) &&
+    length(msi_manifold_paths) > 0) {
+  cat("### Manifold learning embeddings\n\n")
+  purrr::iwalk(msi_manifold_paths, function(paths, dataset) {
+    if (length(paths) == 0) return()
+    cat("#### ", dataset, "\n\n")
+    purrr::iwalk(paths, function(path, method) emit_extra_fig(method, path))
+  })
+}
+
+if (exists("msi_classifier_summary", inherits = TRUE) &&
+    nrow(msi_classifier_summary) > 0) {
+  knitr::kable(
+    msi_classifier_summary,
+    caption = "Random forest accuracy and exported importance plots."
+  )
+}
+
+if (exists("msi_network_paths", inherits = TRUE) &&
+    length(msi_network_paths) > 0) {
+  cat("### Co-localization networks\n\n")
+  purrr::iwalk(msi_network_paths, function(path, dataset) {
+    emit_extra_fig(dataset, path)
+  })
+} else {
+  cat("*(Network diagrams will appear once the extra analysis chunk finishes running.)*")
+}
+```
+
+# Feature annotation
+
+Use the significant m/z values from PCA loadings and classifier
+importance to seed downstream database searches (METLIN, HMDB, GNPS).
+
+```{r annotate-features, echo=TRUE, message=TRUE, warning=FALSE, eval=FALSE}
+source("scripts/08_annotate_features.R")
+```
+
+```{r annotation-summary, echo=FALSE, eval=FALSE}
+if (exists("msi_annotation_preview", inherits = TRUE)) {
+  knitr::kable(
+    head(msi_annotation_preview, 20),
+    caption = "First 20 m/z values queued for annotation (full list saved to tables/significant_mz_features.csv)."
+  )
+}
 ```
 
 # Conclusions
 
 Summarise your findings from each analysis step and discuss any
-biological interpretations or follow‑up questions.  This section can
-also document challenges encountered and potential improvements for
-future analyses.
+biological interpretations or follow‑up questions. This section can also
+document challenges encountered and potential improvements for future
+analyses.
+
+```{r conclusions-summary, echo=FALSE, eval=FALSE}
+if (exists("msi_preprocessing_summary", inherits = TRUE)) {
+  total_raw_pixels <- sum(msi_preprocessing_summary$raw_pixels, na.rm = TRUE)
+  total_proc_pixels <- sum(msi_preprocessing_summary$processed_pixels, na.rm = TRUE)
+  total_features_removed <- sum(msi_preprocessing_summary$feature_delta, na.rm = TRUE)
+  cat(
+    sprintf(
+      "* Preprocessing retained %s/%s pixels while removing %s redundant features across the cohort.\n",
+      format(total_proc_pixels, big.mark = ","),
+      format(total_raw_pixels, big.mark = ","),
+      format(total_features_removed, big.mark = ",")
+    )
+  )
+}
+if (exists("msi_segmentation_summary", inherits = TRUE) &&
+    nrow(msi_segmentation_summary) > 0) {
+  k_val <- unique(na.omit(msi_segmentation_summary$comparison_k))[1]
+  cat(sprintf("* Segmentation compared SSC, SKM, and K-means at k = %s; review the method grids to confirm spatial smoothness.\n", k_val))
+}
+if (exists("msi_classifier_summary", inherits = TRUE) &&
+    nrow(msi_classifier_summary) > 0) {
+  best_acc <- max(msi_classifier_summary$test_accuracy, na.rm = TRUE)
+  cat(sprintf("* Random forest classifiers reached %.1f%% held-out accuracy, validating that spectral differences align with spatial regions.\n", best_acc))
+}
+if (exists("msi_annotation_preview", inherits = TRUE)) {
+  cat("* Exported `tables/significant_mz_features.csv` lists high-priority ions for METLIN/HMDB lookups and future MS/MS confirmation.\n")
+}
+```

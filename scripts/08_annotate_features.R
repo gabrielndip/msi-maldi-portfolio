@@ -41,15 +41,42 @@ adducts_to_search <- c("[M+H]+", "[M+Na]+")
 
 message("Gathering significant m/z features from previous analyses...")
 
+# Helper to recover the m/z axis associated with a dataset's PCA result.
+get_pca_mz <- function(dataset_name, n_features) {
+  if (exists("msi_pca_mz", inherits = TRUE) &&
+      dataset_name %in% names(msi_pca_mz)) {
+    mz_vec <- msi_pca_mz[[dataset_name]]
+  } else if (exists("msi_preprocessed", inherits = TRUE) &&
+             dataset_name %in% names(msi_preprocessed)) {
+    mz_vec <- Cardinal::mz(msi_preprocessed[[dataset_name]])
+  } else if (exists("msi_data", inherits = TRUE) &&
+             dataset_name %in% names(msi_data)) {
+    mz_vec <- Cardinal::mz(msi_data[[dataset_name]])
+  } else {
+    mz_vec <- NULL
+  }
+  if (is.null(mz_vec)) {
+    return(rep(NA_real_, n_features))
+  }
+  if (length(mz_vec) >= n_features) {
+    return(mz_vec[seq_len(n_features)])
+  }
+  c(mz_vec, rep(NA_real_, n_features - length(mz_vec)))
+}
+
 # --- From PCA Loadings (Script 06) ---
 pca_features <- list()
 if (exists("msi_pca") && is.list(msi_pca) && length(msi_pca) > 0) {
-  pca_features <- purrr::map(msi_pca, function(pca_res) {
-    loadings_df <- as.data.frame(loadings(pca_res))
-    loadings_df$mz <- Cardinal::mz(pca_res)
+  pca_features <- purrr::imap(msi_pca, function(pca_res, dataset_name) {
+    loadings_mat <- loadings(pca_res)
+    if (is.null(dim(loadings_mat))) {
+      return(numeric())
+    }
+    loadings_df <- as.data.frame(loadings_mat)
+    loadings_df$mz <- get_pca_mz(dataset_name, nrow(loadings_df))
     
     # Get top features for each PC
-    purrr::map(1:ncol(loadings(pca_res)), function(i) {
+    purrr::map(1:ncol(loadings_mat), function(i) {
       pc_col <- paste0("PC", i)
       loadings_df %>%
         arrange(desc(abs(.data[[pc_col]]))) %>%
@@ -81,7 +108,10 @@ significant_mz <- c(unlist(pca_features), unlist(rf_features)) %>%
   sort()
 
 if (length(significant_mz) == 0) {
-  stop("No significant m/z features found. Please run 06_pca_analysis.R and 07_extra_analysis.R first.")
+  warning("No significant m/z features found. Please run 06_pca_analysis.R and 07_extra_analysis.R first.")
+  assign("msi_annotation_preview", tibble(mz = numeric()), envir = .GlobalEnv)
+  invisible(NULL)
+  return()
 }
 
 message(sprintf("Found %d unique significant m/z values to annotate.", length(significant_mz)))
@@ -158,9 +188,13 @@ if (nrow(all_annotations) > 0) {
 
 # Save the list of significant m/z values for manual searching.
 significant_features_df <- tibble(mz = significant_mz)
-write_csv(significant_features_df, "significant_mz_features.csv")
+tables_dir <- "tables"
+dir.create(tables_dir, showWarnings = FALSE, recursive = TRUE)
+output_csv <- file.path(tables_dir, "significant_mz_features.csv")
+write_csv(significant_features_df, output_csv)
+assign("msi_annotation_preview", significant_features_df, envir = .GlobalEnv)
 
-message("\nA file 'significant_mz_features.csv' has been created with the list of m/z values for manual database searching.")
+message("\nA file 'tables/significant_mz_features.csv' has been created with the list of m/z values for manual database searching.")
 
 ## --------------------------------------------------------------------
 # INTERPRETATION:

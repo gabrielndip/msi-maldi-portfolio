@@ -48,6 +48,20 @@ msi_data <- imzml_files %>%
 # Assign each data object into the global environment for convenience.
 list2env(msi_data, envir = .GlobalEnv)
 
+# Build a compact overview table so the Quarto report can render a
+# dataset summary without re-reading the binary files.
+msi_dataset_overview <- purrr::imap_dfr(msi_data, function(msi_obj, dataset_name) {
+  mz_vals <- tryCatch(mz(msi_obj), error = function(e) NULL)
+  tibble(
+    dataset = dataset_name,
+    pixels = ncol(spectra(msi_obj)),
+    features = nrow(spectra(msi_obj)),
+    mz_min = if (!is.null(mz_vals)) round(min(mz_vals, na.rm = TRUE), 4) else NA_real_,
+    mz_max = if (!is.null(mz_vals)) round(max(mz_vals, na.rm = TRUE), 4) else NA_real_
+  )
+})
+assign("msi_dataset_overview", msi_dataset_overview, envir = .GlobalEnv)
+
 message("Successfully loaded datasets: ", paste(names(msi_data), collapse = ", "))
 
 # Return the list invisibly.

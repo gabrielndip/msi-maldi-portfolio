@@ -82,11 +82,20 @@ crop_to_roi <- function(proc_msi, name, quantile = 0.25) {
 
 message("--- Cropping datasets to Region of Interest (ROI) ---")
 
-# Apply the cropping function to each processed dataset.
-msi_roi <- purrr::imap(msi_preprocessed, ~crop_to_roi(.x, .y, quantile = tic_quantile))
+msi_roi <- list()
+msi_roi_summary <- purrr::imap_dfr(msi_preprocessed, function(proc_msi, name) {
+  cropped <- crop_to_roi(proc_msi, name, quantile = tic_quantile)
+  msi_roi[[name]] <<- cropped
+  tibble(
+    dataset = name,
+    processed_pixels = ncol(proc_msi),
+    roi_pixels = if (!is.null(cropped)) ncol(cropped) else NA_integer_
+  )
+})
 
 # Assign new objects to the global environment.
 list2env(msi_roi, envir = .GlobalEnv)
+assign("msi_roi_summary", msi_roi_summary, envir = .GlobalEnv)
 
 message("ROI cropping complete. New objects are available (e.g., Brain01_..._proc_roi).")
 

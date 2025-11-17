@@ -38,6 +38,8 @@ k_range <- 3:6
 
 # The single 'k' to use for the final 3-method comparison.
 comparison_k <- 4
+segmentation_figure_dir <- file.path("figures", "segmentation")
+dir.create(segmentation_figure_dir, showWarnings = FALSE, recursive = TRUE)
 
 ## --------------------------------------------------------------------
 ## Setup
@@ -55,9 +57,22 @@ if (exists("msi_roi") && is.list(msi_roi) && length(msi_roi) > 0) {
 }
 
 # Check if PCA results are available for k-means comparison.
-pca_available <- exists("msi_pca") && is.list(msi_pca) && length(msi_pca) > 0
-if (!pca_available) {
-  warning("PCA results not found. Skipping non-spatial k-means comparison. Run 06_pca_analysis.R to enable it.")
+if (!exists("msi_pca", inherits = TRUE) || !is.list(msi_pca)) {
+  msi_pca <- list()
+}
+
+ensure_pca_baseline <- function(dataset_name, msi_obj, ncomp = max(comparison_k, 5)) {
+  if (!dataset_name %in% names(msi_pca)) {
+    message(sprintf("  Computing PCA for '%s' to support k-means baseline.", dataset_name))
+    msi_pca[[dataset_name]] <<- tryCatch(
+      PCA(msi_obj, ncomp = ncomp),
+      error = function(e) {
+        warning(sprintf("PCA failed for '%s': %s", dataset_name, e$message))
+        NULL
+      }
+    )
+  }
+  msi_pca[[dataset_name]]
 }
 
 ## --------------------------------------------------------------------
@@ -81,14 +96,31 @@ purrr::iwalk(segmentation_input, function(msi_obj, name) {
   }
 })
 
-# Plot the SSC results for each k to allow visual comparison.
+# Plot the SSC results for each k to allow visual comparison and capture PNGs.
 message("Plotting SSC results for different k values...")
-purrr::iwalk(msi_ssc, function(results_list, name) {
-  if (length(results_list) == 0) return()
-  old_par <- par(no.readonly = TRUE); on.exit(par(old_par))
+msi_segmentation_plots <- list()
+msi_segmentation_overview <- list()
+
+save_ssc_grid <- function(results_list, dataset_name) {
+  outfile <- file.path(segmentation_figure_dir, paste0(dataset_name, "_ssc_grid.png"))
+  grDevices::png(outfile, width = 2200, height = 800, res = 220)
+  on.exit(grDevices::dev.off(), add = TRUE)
+  old_par <- par(no.readonly = TRUE)
+  on.exit(par(old_par), add = TRUE)
   par(mfrow = c(1, length(results_list)), oma = c(0, 0, 3, 0))
   purrr::iwalk(results_list, ~plot(.x, main = .y))
-  mtext(paste0(name, ": SSC Segmentation Results (Varying k)"), side = 3, line = 1, outer = TRUE, font = 2, cex = 1.2)
+  mtext(paste0(dataset_name, ": SSC Segmentation Results (Varying k)"), side = 3, line = 1, outer = TRUE, font = 2, cex = 1.2)
+  outfile
+}
+
+purrr::iwalk(msi_ssc, function(results_list, name) {
+  if (length(results_list) == 0) return()
+  grid_path <- save_ssc_grid(results_list, name)
+  msi_segmentation_plots[[paste0(name, "_ssc_grid")]] <<- grid_path
+  msi_segmentation_overview[[name]] <<- tibble(
+    dataset = name,
+    k_sweep = paste(names(results_list), collapse = ", ")
+  )
 })
 
 ## --------------------------------------------------------------------
@@ -102,7 +134,7 @@ purrr::iwalk(segmentation_input, function(msi_obj, name) {
   
   # --- Data Check ---
   ssc_result <- msi_ssc[[name]][[paste0("k", comparison_k)]]
-  pca_result <- if (pca_available) msi_pca[[name]] else NULL
+  pca_result <- ensure_pca_baseline(name, msi_obj)
   if (is.null(ssc_result) || is.null(pca_result)) {
     warning(sprintf("Skipping comparison for '%s' due to missing SSC (for k=%d) or PCA results.", name, comparison_k))
     return()
@@ -124,7 +156,11 @@ purrr::iwalk(segmentation_input, function(msi_obj, name) {
   pData(msi_obj)$kmeans_cluster <- factor(kmeans_res$cluster)
   
   # --- Plot 3-Way Comparison ---
-  old_par <- par(no.readonly = TRUE); on.exit(par(old_par))
+  comparison_file <- file.path(segmentation_figure_dir, paste0(name, "_method_comparison.png"))
+  grDevices::png(comparison_file, width = 2200, height = 800, res = 220)
+  on.exit(grDevices::dev.off(), add = TRUE)
+  old_par <- par(no.readonly = TRUE)
+  on.exit(par(old_par), add = TRUE)
   par(mfrow = c(1, 3), oma = c(0, 0, 3, 0))
   
   # Plot 1: SSC Result
@@ -141,11 +177,27 @@ purrr::iwalk(segmentation_input, function(msi_obj, name) {
   plot(msi_obj, .color = ~ kmeans_cluster, main = "Method: K-Means (non-spatial)")
   
   mtext(paste0(name, ": Segmentation Method Comparison (k=", comparison_k, ")"), side = 3, line = 1, outer = TRUE, font = 2, cex = 1.2)
+  msi_segmentation_plots[[paste0(name, "_comparison")]] <<- comparison_file
+  existing_summary <- msi_segmentation_overview[[name]]
+  comparison_row <- tibble(
+    dataset = name,
+    k_sweep = if (!is.null(existing_summary$k_sweep)) existing_summary$k_sweep else paste(names(msi_ssc[[name]]), collapse = ", "),
+    comparison_k = comparison_k,
+    has_skm = !is.null(skm_result)
+  )
+  msi_segmentation_overview[[name]] <<- comparison_row
 })
 
 # --- Save results to environment ---
 assign("msi_ssc", msi_ssc, envir = .GlobalEnv)
 assign("msi_skm", msi_skm, envir = .GlobalEnv)
+assign("msi_pca", msi_pca, envir = .GlobalEnv)
+assign("msi_segmentation_plots", msi_segmentation_plots, envir = .GlobalEnv)
+assign(
+  "msi_segmentation_summary",
+  bind_rows(msi_segmentation_overview),
+  envir = .GlobalEnv
+)
 message("\nSegmentation analysis complete.")
 
 ## --------------------------------------------------------------------

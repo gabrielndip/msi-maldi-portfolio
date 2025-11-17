@@ -2,18 +2,18 @@
 ##
 ## Quality Control and Exploratory Data Analysis
 ##
-## This script produces a set of diagnostic visualizations for each raw
-## and processed dataset. The goal is to assess data quality and get a
+## This script produces and saves a set of diagnostic visualizations for each
+## raw and processed dataset. The goal is to assess data quality and get a
 ## first look at the most prominent spatial patterns.
 ##
-## The script generates three key sets of plots:
-## 1.  **Total Ion Current (TIC) Images**: To check for overall signal
-##     intensity and identify the tissue area.
-## 2.  **Spatially Ranked Ion Images**: Instead of picking an arbitrary ion,
-##     this script now identifies the top 3 features with the highest
-##     spatial structure (using Moran's I statistic) and displays their
-##     ion images. This immediately highlights biologically relevant patterns.
-## 3.  **Mass Spectra**: Shows the m/z profile for a randomly selected pixel.
+## For each dataset, the script generates three separate plot panels:
+## 1.  **TIC Panel**: TIC images for raw vs. processed data.
+## 2.  **Spectra Panel**: Mass spectra for a random pixel for raw vs. processed data.
+## 3.  **Spatial Features Panel**: Ion images for the top 3 features with the
+##     highest spatial structure (using Moran's I).
+##
+## These plots are saved to the 'figures/qc' directory and are intended to be
+## displayed in the final knitted HTML report.
 
 suppressPackageStartupMessages({
   library(tidyverse)
@@ -25,6 +25,8 @@ suppressPackageStartupMessages({
 ## --------------------------------------------------------------------
 set.seed(123) # For reproducible pixel selection
 N_SPATIAL_FEATURES <- 3 # Number of top spatial features to plot
+qc_figure_dir <- file.path("figures", "qc")
+dir.create(qc_figure_dir, showWarnings = FALSE, recursive = TRUE)
 
 ## --------------------------------------------------------------------
 ## Setup
@@ -34,119 +36,173 @@ if (!exists("msi_data", inherits = TRUE) || !exists("msi_preprocessed", inherits
 }
 
 ## --------------------------------------------------------------------
-## Plotting Functions
+## Plotting and Saving Functions
 ## --------------------------------------------------------------------
 
-#' Plot TIC images for a raw and processed dataset.
-plot_tic_images <- function(raw_msi, proc_msi) {
-  plot(raw_msi, main = "Raw TIC")
-  plot(proc_msi, main = "Processed TIC")
+#' Save a panel comparing Raw and Processed TIC images.
+save_tic_panel <- function(raw_msi, proc_msi, dataset_name) {
+  outfile <- file.path(qc_figure_dir, paste0(dataset_name, "_qc_tic.png"))
+  grDevices::png(outfile, width = 1200, height = 600, res = 150)
+  on.exit(grDevices::dev.off())
+
+  par(mfrow = c(1, 2), mar = c(4, 4, 4, 2))
+  
+  plot(raw_msi, main = paste(dataset_name, "- Raw TIC"))
+  
+  if (!is.null(proc_msi) && nrow(proc_msi) > 0) {
+    plot(proc_msi, main = "Processed TIC")
+  } else {
+    plot(1, type="n", axes=FALSE, xlab="", ylab="")
+    title(main = "Processed TIC")
+    text(1, 1, "No features remaining after preprocessing.", cex = 1.2)
+  }
+  
+  return(outfile)
 }
 
-#' Plot spectra for a single random pixel.
-plot_spectra <- function(raw_msi, proc_msi) {
-  pixel_count <- ncol(iData(raw_msi))
-  pixel_idx <- if (is.na(pixel_count) || pixel_count < 1) 1 else sample(pixel_count, 1)
+#' Save a panel comparing Raw and Processed spectra for a random pixel.
+save_spectra_panel <- function(raw_msi, proc_msi, dataset_name) {
+  outfile <- file.path(qc_figure_dir, paste0(dataset_name, "_qc_spectra.png"))
+  grDevices::png(outfile, width = 1200, height = 600, res = 150)
+  on.exit(grDevices::dev.off())
   
-  plot(raw_msi, pixel = pixel_idx, main = paste("Raw Spectrum - Pixel", pixel_idx))
-  plot(proc_msi, pixel = pixel_idx, main = paste("Processed Spectrum - Pixel", pixel_idx))
+  pixel_idx <- if (ncol(spectra(raw_msi)) < 1) 1 else sample(ncol(spectra(raw_msi)), 1)
+  
+  par(mfrow = c(1, 2), mar = c(4, 4, 4, 2))
+  
+  plot(raw_msi, i = pixel_idx, main = paste(dataset_name, "- Raw Spectrum"))
+  
+  if (!is.null(proc_msi) && nrow(proc_msi) > 0) {
+    plot(proc_msi, i = pixel_idx, main = "Processed Spectrum")
+  } else {
+    plot(1, type="n", axes=FALSE, xlab="", ylab="")
+    title(main = "Processed Spectrum")
+    text(1, 1, "No features remaining after preprocessing.", cex = 1.2)
+  }
+
+  return(outfile)
 }
 
-#' Find and plot the most spatially-structured ion images.
-#'
-#' @param msi_obj The processed MSImageSet.
-#' @param n The number of top features to plot.
-plot_spatially_ranked_images <- function(msi_obj, n = 3) {
-  message(sprintf("  Finding top %d spatially-ranked features...", n))
-  
-  # Use spatialFeatures with local Moran's I ('rI') to rank features.
-  # This is computationally intensive. We use a subset of pixels for speed.
-  top_features <- tryCatch({
-    spatialFeatures(msi_obj, method = "rI", r = 2, top = n)
-  }, error = function(e) {
-    warning("spatialFeatures failed. Falling back to top intensity features. Error: ", e$message)
-    # Fallback: if spatialFeatures fails, use top N by total intensity.
-    top_intensity_idx <- order(rowSums(iData(msi_obj)), decreasing = TRUE)[1:n]
-    features(msi_obj, mz = mz(msi_obj)[top_intensity_idx])
+#' Find, plot, and save the most spatially-structured ion images.
+save_spatial_panel <- function(msi_obj, dataset_name, n = 3) {
+  outfile <- file.path(qc_figure_dir, paste0(dataset_name, "_qc_spatial.png"))
+  grDevices::png(outfile, width = 1800, height = 600, res = 150)
+  on.exit(grDevices::dev.off())
+
+  if (is.null(msi_obj) || nrow(msi_obj) == 0) {
+    warning("Skipping spatial analysis for ", dataset_name, ": No features in processed data.", call. = FALSE)
+    plot(1, type="n", axes=FALSE, xlab="", ylab="")
+    title(main = paste(dataset_name, "- Top Spatial Features"))
+    text(1, 1, "No features available for spatial analysis.", cex = 1.5)
+    return(list(path = outfile, spatial_mz = NULL))
+  }
+
+  message(sprintf("  Finding top %d spatially-ranked features for %s...", n, dataset_name))
+
+  # spatialStats was removed in newer Cardinal releases. Prefer it when available,
+  # otherwise fall back to simple intensity-based ranking.
+  spatial_stats_fn <- get0("spatialStats", envir = asNamespace("Cardinal"), inherits = FALSE)
+
+  feature_idx <- integer(0)
+
+  if (is.function(spatial_stats_fn)) {
+    spatial_stats_result <- try(
+      spatial_stats_fn(msi_obj, method = "moran", type = "local", r = 2),
+      silent = TRUE
+    )
+
+    if (!inherits(spatial_stats_result, "try-error")) {
+      spatial_stats_df <- as.data.frame(spatial_stats_result) %>%
+        arrange(desc(MoranI)) %>%
+        head(n)
+      feature_idx <- match(spatial_stats_df$mz, mz(msi_obj))
+    } else {
+      warning("spatialStats failed for ", dataset_name, ". Falling back to top intensity.", call. = FALSE)
+    }
+  } else {
+    warning("Cardinal::spatialStats not available; using intensity ranking instead.", call. = FALSE)
+  }
+
+  if (length(feature_idx) == 0 || all(is.na(feature_idx))) {
+    feature_idx <- order(rowSums(spectra(msi_obj)), decreasing = TRUE)
+  }
+
+  feature_idx <- unique(stats::na.omit(feature_idx))
+  feature_idx <- head(feature_idx, n)
+
+  if (length(feature_idx) == 0) {
+    warning("Could not identify top features to plot for ", dataset_name, call. = FALSE)
+    plot(1, type="n", axes=FALSE, xlab="", ylab="")
+    title(main = paste(dataset_name, "- Top Spatial Features"))
+    text(1, 1, "Could not identify any top spatial features.", cex = 1.5)
+    return(list(path = outfile, spatial_mz = NULL))
+  }
+
+  par(mfrow = c(1, length(feature_idx)), mar = c(2, 2, 5, 1))
+
+  mz_values <- mz(msi_obj)[feature_idx]
+
+  purrr::iwalk(feature_idx, function(idx, panel_idx) {
+    image(
+      msi_obj,
+      i = idx,
+      main = sprintf("Top Feature %d\nm/z = %.2f", panel_idx, mz_values[panel_idx])
+    )
   })
-  
-  if (length(top_features) == 0) {
-    warning("Could not identify top features to plot.")
-    replicate(n, plot.new()) # Plot empty frames to keep layout consistent
-    return()
-  }
-  
-  # Plot the ion image for each top feature
-  for (i in 1:length(top_features)) {
-    f <- top_features[i]
-    mz_val <- mz(f)
-    image(f, main = sprintf("Top Spatial Feature %d\nm/z = %.2f", i, mz_val))
-  }
-  
-  # If we plotted fewer than n features, fill the rest with empty plots
-  if (length(top_features) < n) {
-    replicate(n - length(top_features), plot.new())
-  }
+
+  return(list(path = outfile, spatial_mz = unique(round(mz_values, 4))))
 }
+
 
 ## --------------------------------------------------------------------
 ## Main Execution Loop
 ## --------------------------------------------------------------------
 
-# Iterate over each dataset to generate and save plots.
-purrr::iwalk(msi_data, function(raw_msi, name) {
+msi_qc_plots <- list()
+msi_qc_spatial_features <- list()
+
+for (name in names(msi_data)) {
+  raw_msi <- msi_data[[name]]
   proc_name <- paste0(name, "_proc")
+  
   if (!proc_name %in% names(msi_preprocessed)) {
-    warning("No processed dataset found for ", name, " – skipping.")
-    return()
+    warning("No processed dataset found for ", name, " – skipping QC.")
+    next
   }
   proc_msi <- msi_preprocessed[[proc_name]]
   
   message(sprintf("\n--- Generating QC plots for: %s ---", name))
   
-  # Set up plot layout: 2 rows, 3 columns
-  # Row 1: TIC images and a spectrum
-  # Row 2: Top 3 spatially-ranked ion images
-  old_par <- par(no.readonly = TRUE)
-  on.exit(par(old_par))
-  layout(matrix(c(1, 1, 2, 2, 3, 4, 5, 5, 6, 6, 7, 8), nrow = 2, byrow = TRUE))
-  par(mar = c(4, 4, 3, 2), oma = c(0, 0, 3, 0))
-  
-  # --- Generate Plots ---
   tryCatch({
-    # Plot TIC (Raw vs Processed)
-    plot(raw_msi, main = "Raw TIC"); plot(proc_msi, main = "Processed TIC")
+    tic_path <- save_tic_panel(raw_msi, proc_msi, name)
+    spectra_path <- save_spectra_panel(raw_msi, proc_msi, name)
+    spatial_info <- save_spatial_panel(proc_msi, name, n = N_SPATIAL_FEATURES)
     
-    # Plot Spectrum (Raw vs Processed)
-    pixel_idx <- if (ncol(iData(raw_msi)) < 1) 1 else sample(ncol(iData(raw_msi)), 1)
-    plot(raw_msi, pixel = pixel_idx, main = paste("Raw Spectrum", pixel_idx))
-    plot(proc_msi, pixel = pixel_idx, main = paste("Processed Spectrum", pixel_idx))
-    
-    # Plot Spatially Ranked Features from the processed data
-    plot_spatially_ranked_images(proc_msi, n = N_SPATIAL_FEATURES)
-    
-    # Add an overall title
-    mtext(paste("QC Report:", name), side = 3, line = 1, outer = TRUE, font = 2, cex = 1.2)
+    msi_qc_plots[[name]] <- list(
+      tic = tic_path,
+      spectra = spectra_path,
+      spatial = spatial_info$path
+    )
+    msi_qc_spatial_features[[name]] <- spatial_info$spatial_mz
     
   }, error = function(e) {
-    warning(sprintf("Failed to generate full QC plot for %s: %s", name, e$message))
+    warning(sprintf("Failed to generate QC plots for %s: %s", name, e$message))
   })
-})
+}
 
-message("\nExploratory analysis complete.")
+message("\nExploratory analysis complete. QC plots saved to 'figures/qc/'.")
+assign("msi_qc_plots", msi_qc_plots, envir = .GlobalEnv)
+assign("msi_qc_spatial_features", msi_qc_spatial_features, envir = .GlobalEnv)
+
 
 ## --------------------------------------------------------------------
 # INTERPRETATION:
 #
-# - The TIC images give a general overview of the data quality. The
-#   processed TIC should look smoother than the raw.
-#
-# - The "Top Spatial Feature" plots are the most important. They show
-#   the ion images for m/z values that have strong, non-random spatial
-#   distributions. These are excellent candidates for being biomarkers
-#   that define specific anatomical regions.
+# - The TIC images give a general overview of the data quality.
+# - The "Top Spatial Feature" plots are the most important, showing
+#   biomarkers that define specific anatomical regions.
 #
 # NEXT STEP:
-# Run 04_roi_crop.R to crop the data to the tissue area, followed by
-# 05_ssc_segmentation.R to formally segment the regions hinted at here.
+# The Quarto document will now display these generated plots. Following this,
+# run 04_roi_crop.R to crop the data to the tissue area.
 ## --------------------------------------------------------------------

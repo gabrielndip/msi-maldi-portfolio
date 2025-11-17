@@ -30,6 +30,8 @@ loaded_pkgs <- sapply(packages, function(pkg) {
     return(TRUE)
   })
 })
+extra_figure_dir <- file.path("figures", "extra")
+dir.create(extra_figure_dir, showWarnings = FALSE, recursive = TRUE)
 
 # Determine which datasets to analyse.
 if (exists("msi_roi") && is.list(msi_roi) && length(msi_roi) > 0) {
@@ -89,7 +91,9 @@ extract_features <- function(msi_obj, dataset_name, nfeat = 200) {
 #' @param features A matrix of features (pixels x features).
 #' @param labels A vector of class labels for coloring points.
 #' @param dataset_name The name of the dataset for plot titles.
-perform_manifold <- function(features, labels, dataset_name) {
+#' @param prefix File prefix used when saving figures.
+perform_manifold <- function(features, labels, dataset_name, prefix) {
+  paths <- list()
   # t-SNE analysis
   if (loaded_pkgs["Rtsne"]) {
     tryCatch({
@@ -101,6 +105,9 @@ perform_manifold <- function(features, labels, dataset_name) {
         scale_color_viridis_d(option = "plasma", na.value = "grey50") +
         labs(title = paste0(dataset_name, ": t-SNE"), color = "Class") +
         theme_minimal()
+      tsne_path <- file.path(extra_figure_dir, paste0(prefix, "_tsne.png"))
+      ggplot2::ggsave(tsne_path, p_tsne, width = 7, height = 5, dpi = 220)
+      paths$tsne <- tsne_path
       print(p_tsne)
     }, error = function(e) warning(sprintf("t-SNE failed for '%s': %s", dataset_name, e$message)))
   }
@@ -115,9 +122,13 @@ perform_manifold <- function(features, labels, dataset_name) {
         scale_color_viridis_d(option = "plasma", na.value = "grey50") +
         labs(title = paste0(dataset_name, ": UMAP"), color = "Class") +
         theme_minimal()
+      umap_path <- file.path(extra_figure_dir, paste0(prefix, "_umap.png"))
+      ggplot2::ggsave(umap_path, p_umap, width = 7, height = 5, dpi = 220)
+      paths$umap <- umap_path
       print(p_umap)
     }, error = function(e) warning(sprintf("UMAP failed for '%s': %s", dataset_name, e$message)))
   }
+  return(paths)
 }
 
 
@@ -126,8 +137,9 @@ perform_manifold <- function(features, labels, dataset_name) {
 #' @param features A matrix of features (pixels x features).
 #' @param labels A vector of class labels.
 #' @param dataset_name The name of the dataset.
-#' @return The trained randomForest model.
-perform_classification <- function(features, labels, dataset_name) {
+#' @param prefix File prefix used when saving figures.
+#' @return A list with the trained model and accuracy metadata.
+perform_classification <- function(features, labels, dataset_name, prefix) {
   if (!loaded_pkgs["randomForest"]) return(NULL)
   if (is.null(labels)) {
     warning(sprintf("No labels available for supervised classification on '%s'.", dataset_name))
@@ -159,9 +171,11 @@ perform_classification <- function(features, labels, dataset_name) {
            subtitle = "(Predicting segmentation class)",
            x = "Mean Decrease in Gini Impurity", y = "m/z") +
       theme_minimal()
+    imp_path <- file.path(extra_figure_dir, paste0(prefix, "_feature-importance.png"))
+    ggplot2::ggsave(imp_path, p_imp, width = 7, height = 5, dpi = 220)
     print(p_imp)
     
-    return(rf_model)
+    list(model = rf_model, accuracy = acc, importance_plot = imp_path)
   }, error = function(e) {
     warning(sprintf("Classification failed for '%s': %s", dataset_name, e$message))
     return(NULL)
@@ -175,7 +189,7 @@ perform_classification <- function(features, labels, dataset_name) {
 #' @param dataset_name The name of the dataset.
 #' @param threshold_quantile The correlation quantile to use for creating edges.
 #' @return An igraph graph object.
-construct_network <- function(msi_obj, dataset_name, threshold_quantile = 0.99) {
+construct_network <- function(msi_obj, dataset_name, outfile, threshold_quantile = 0.99) {
   if (!loaded_pkgs["igraph"]) return(NULL)
   tryCatch({
     int_mat <- iData(msi_obj)
@@ -188,10 +202,12 @@ construct_network <- function(msi_obj, dataset_name, threshold_quantile = 0.99) 
     g <- igraph::graph_from_adjacency_matrix(adj_mat, mode = "undirected", weighted = TRUE, diag = FALSE)
     g <- igraph::simplify(g, remove.multiple = TRUE, remove.loops = TRUE)
     
+    grDevices::png(outfile, width = 1600, height = 1200, res = 220)
+    on.exit(grDevices::dev.off(), add = TRUE)
     igraph::plot(g, vertex.size = 5, vertex.label = NA,
                  edge.width = igraph::E(g)$weight * 5,
                  main = paste0(dataset_name, ": Co-localization Network"))
-    return(g)
+    return(list(graph = g, path = outfile))
   }, error = function(e) {
     warning(sprintf("Network construction failed for '%s': %s", dataset_name, e$message))
     return(NULL)
@@ -204,6 +220,9 @@ construct_network <- function(msi_obj, dataset_name, threshold_quantile = 0.99) 
 
 classifiers <- list()
 networks <- list()
+msi_manifold_paths <- list()
+msi_classifier_summary <- list()
+msi_network_paths <- list()
 
 purrr::imap(data_list, function(msi_obj, name) {
   message(sprintf("\n--- Starting extra analysis for: %s ---", name))
@@ -212,21 +231,41 @@ purrr::imap(data_list, function(msi_obj, name) {
   feat_res <- extract_features(msi_obj, name, nfeat = 200)
   if (is.null(feat_res)) return(NULL)
   
+  prefix <- paste0(gsub("[^A-Za-z0-9]+", "_", name))
+  
   # Perform manifold learning (t-SNE/UMAP)
-  perform_manifold(feat_res$matrix, feat_res$labels, name)
+  manifold_paths <- perform_manifold(feat_res$matrix, feat_res$labels, name, prefix)
+  msi_manifold_paths[[name]] <<- manifold_paths
   
   # Supervised classification and feature importance
-  rf_mod <- perform_classification(feat_res$matrix, feat_res$labels, name)
-  if (!is.null(rf_mod)) classifiers[[name]] <<- rf_mod
+  rf_mod <- perform_classification(feat_res$matrix, feat_res$labels, name, prefix)
+  if (!is.null(rf_mod)) {
+    classifiers[[name]] <<- rf_mod$model
+    msi_classifier_summary[[name]] <<- tibble(
+      dataset = name,
+      test_accuracy = round(100 * rf_mod$accuracy, 2),
+      importance_plot = rf_mod$importance_plot
+    )
+  }
   
   # Co-localization network
-  net <- construct_network(msi_obj, name)
-  if (!is.null(net)) networks[[name]] <<- net
+  net <- construct_network(msi_obj, name, file.path(extra_figure_dir, paste0(prefix, "_network.png")))
+  if (!is.null(net)) {
+    networks[[name]] <<- net$graph
+    msi_network_paths[[name]] <<- net$path
+  }
 })
 
 # Save results to the global environment.
 assign("msi_classifiers", classifiers, envir = .GlobalEnv)
 assign("msi_networks", networks, envir = .GlobalEnv)
+assign("msi_manifold_paths", msi_manifold_paths, envir = .GlobalEnv)
+assign(
+  "msi_classifier_summary",
+  bind_rows(msi_classifier_summary),
+  envir = .GlobalEnv
+)
+assign("msi_network_paths", msi_network_paths, envir = .GlobalEnv)
 
 message("\nExtra analyses complete.")
 
