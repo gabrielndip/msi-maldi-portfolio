@@ -116,6 +116,11 @@ if (exists("msi_qc_spatial_features", inherits = TRUE) &&
 ```
 
 ```{r qc-figures, echo=FALSE, results='asis'}
+qc_legend <- list(
+  tic = "*Figure legend:* Raw vs. processed TIC heatmaps; processed images should look smoother and more uniform.",
+  spectra = "*Figure legend:* Raw vs. processed spectra from a representative pixel; peak picking/alignment simplify the processed trace.",
+  spatial = "*Figure legend:* Top spatially structured ions; bright regions highlight m/z values that localize to specific tissue areas."
+)
 if (!exists("msi_qc_plots", inherits = TRUE) ||
     length(msi_qc_plots) == 0) {
   qc_dir <- file.path("figures", "qc")
@@ -155,8 +160,11 @@ if (exists("msi_qc_plots", inherits = TRUE) && length(msi_qc_plots) > 0) {
     cat(sprintf("### QC Report for %s\n\n", dataset_name))
     
     tic_shown <- render_img(paths$tic)
+    if (tic_shown) cat(qc_legend$tic, "\n\n")
     spectra_shown <- render_img(paths$spectra)
+    if (spectra_shown) cat(qc_legend$spectra, "\n\n")
     spatial_shown <- render_img(paths$spatial)
+    if (spatial_shown) cat(qc_legend$spatial, "\n\n")
 
     # Fallback for legacy single-panel QC images if per-panel files are missing.
     if (!tic_shown && !spectra_shown && !spatial_shown) {
@@ -237,6 +245,10 @@ emit_seg_fig <- function(title, path) {
   img_uri <- knitr::image_uri(path)
   cat(sprintf("#### %s\n\n![](%s)\n\n", title, img_uri))
 }
+seg_legends <- list(
+  sweep = "*Figure legend:* SSC segmentation grids across k values; each panel shows spatial clusters, with higher k revealing finer subregions.",
+  compare = "*Figure legend:* Method comparison at fixed k; SSC and SKM should yield smoother contiguous regions than non-spatial k-means."
+)
 if (!exists("msi_segmentation_plots", inherits = TRUE) ||
     length(msi_segmentation_plots) == 0) {
   seg_dir <- file.path("figures", "segmentation")
@@ -255,10 +267,12 @@ if (exists("msi_segmentation_plots", inherits = TRUE) &&
   if (length(sweep_paths) > 0) {
     cat("### SSC k-sweep panels\n\n")
     purrr::iwalk(sweep_paths, function(path, label) emit_seg_fig(label, path))
+    cat(seg_legends$sweep, "\n\n")
   }
   if (length(comparison_paths) > 0) {
     cat("### Method comparison panels\n\n")
     purrr::iwalk(comparison_paths, function(path, label) emit_seg_fig(label, path))
+    cat(seg_legends$compare, "\n\n")
   }
 } else {
   cat("*(Segmentation figures are available after running the segmentation chunk.)*")
@@ -298,6 +312,10 @@ emit_pca_fig <- function(title, path) {
   if (is.null(path) || !file.exists(path)) return()
   cat(sprintf("#### %s\n\n![](%s)\n\n", title, knitr::image_uri(path)))
 }
+pca_legends <- list(
+  scores = "*Figure legend:* PCA score maps show spatial patterns captured by each principal component; smooth gradients indicate dominant anatomical variation.",
+  loadings = "*Figure legend:* PCA loading spectra highlight m/z values driving each component; labeled peaks are candidate biomarkers."
+)
 if (!exists("msi_pca_score_paths", inherits = TRUE) ||
     length(msi_pca_score_paths) == 0 ||
     !all(file.exists(unlist(msi_pca_score_paths)))) {
@@ -317,11 +335,13 @@ if (exists("msi_pca_score_paths", inherits = TRUE) &&
     length(msi_pca_score_paths) > 0) {
   cat("### PCA score maps\n\n")
   purrr::iwalk(msi_pca_score_paths, function(path, label) emit_pca_fig(label, path))
+  cat(pca_legends$scores, "\n\n")
 }
 if (exists("msi_pca_loading_paths", inherits = TRUE) &&
     length(msi_pca_loading_paths) > 0) {
   cat("### PCA loading spectra\n\n")
   purrr::iwalk(msi_pca_loading_paths, function(path, label) emit_pca_fig(label, path))
+  cat(pca_legends$loadings, "\n\n")
 } else {
   cat("*(PCA figure panels will display after running the PCA analysis chunk.)*")
 }
@@ -352,6 +372,10 @@ emit_extra_fig <- function(title, path) {
   if (is.null(path) || !file.exists(path)) return()
   cat(sprintf("#### %s\n\n![](%s)\n\n", title, knitr::image_uri(path)))
 }
+extra_legends <- list(
+  manifold = "*Figure legend:* t-SNE/UMAP embeddings map pixel spectra into 2D; tight, well-separated clusters imply distinct spectral profiles aligned with segmentation labels.",
+  network = "*Figure legend:* Co-localization networks connect m/z features that co-occur across pixels; thicker edges indicate stronger co-occurrence."
+)
 if (!exists("msi_manifold_paths", inherits = TRUE) ||
     length(msi_manifold_paths) == 0) {
   extra_dir <- file.path("figures", "extra")
@@ -391,6 +415,7 @@ if (exists("msi_manifold_paths", inherits = TRUE) &&
     cat("#### ", dataset, "\n\n")
     purrr::iwalk(paths, function(path, method) emit_extra_fig(method, path))
   })
+  cat(extra_legends$manifold, "\n\n")
 }
 
 if (exists("msi_classifier_summary", inherits = TRUE) &&
@@ -407,6 +432,7 @@ if (exists("msi_network_paths", inherits = TRUE) &&
   purrr::iwalk(msi_network_paths, function(path, dataset) {
     emit_extra_fig(dataset, path)
   })
+  cat(extra_legends$network, "\n\n")
 } else {
   cat("*(Network diagrams will appear once the extra analysis chunk finishes running.)*")
 }
