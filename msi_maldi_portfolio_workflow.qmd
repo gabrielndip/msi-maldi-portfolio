@@ -237,6 +237,17 @@ emit_seg_fig <- function(title, path) {
   img_uri <- knitr::image_uri(path)
   cat(sprintf("#### %s\n\n![](%s)\n\n", title, img_uri))
 }
+if (!exists("msi_segmentation_plots", inherits = TRUE) ||
+    length(msi_segmentation_plots) == 0) {
+  seg_dir <- file.path("figures", "segmentation")
+  if (dir.exists(seg_dir)) {
+    seg_files <- list.files(seg_dir, pattern = "\\.png$", full.names = TRUE)
+    if (length(seg_files) > 0) {
+      seg_names <- tools::file_path_sans_ext(basename(seg_files))
+      msi_segmentation_plots <- purrr::set_names(seg_files, seg_names)
+    }
+  }
+}
 if (exists("msi_segmentation_plots", inherits = TRUE) &&
     length(msi_segmentation_plots) > 0) {
   sweep_paths <- msi_segmentation_plots[grepl("_ssc_grid$", names(msi_segmentation_plots))]
@@ -278,13 +289,29 @@ The code chunk above will produce two sets of plots:
 Perform dimensionality reduction (e.g. PCA) to extract dominant spectral
 patterns and visualize spatial loadings.
 
-```{r pca-analysis, echo=TRUE, message=TRUE, warning=FALSE, eval=FALSE}
+```{r pca-analysis, echo=TRUE, message=FALSE, warning=FALSE, results='hide'}
 source("scripts/06_pca_analysis.R")
 ```
 
-```{r pca-figures, echo=FALSE, results='asis', eval=FALSE}
+```{r pca-figures, echo=FALSE, results='asis'}
 emit_pca_fig <- function(title, path) {
-  cat(sprintf("#### %s\n\n![](%s)\n\n", title, path))
+  if (is.null(path) || !file.exists(path)) return()
+  cat(sprintf("#### %s\n\n![](%s)\n\n", title, knitr::image_uri(path)))
+}
+if (!exists("msi_pca_score_paths", inherits = TRUE) ||
+    length(msi_pca_score_paths) == 0 ||
+    !all(file.exists(unlist(msi_pca_score_paths)))) {
+  pca_dir <- file.path("figures", "pca")
+  if (dir.exists(pca_dir)) {
+    score_files <- list.files(pca_dir, pattern = "_scores\\.png$", full.names = TRUE)
+    load_files <- list.files(pca_dir, pattern = "_loadings\\.png$", full.names = TRUE)
+    if (length(score_files) > 0) {
+      msi_pca_score_paths <- purrr::set_names(score_files, tools::file_path_sans_ext(basename(score_files)))
+    }
+    if (length(load_files) > 0) {
+      msi_pca_loading_paths <- purrr::set_names(load_files, tools::file_path_sans_ext(basename(load_files)))
+    }
+  }
 }
 if (exists("msi_pca_score_paths", inherits = TRUE) &&
     length(msi_pca_score_paths) > 0) {
@@ -300,7 +327,7 @@ if (exists("msi_pca_loading_paths", inherits = TRUE) &&
 }
 ```
 
-```{r pca-summary, echo=FALSE, eval=FALSE}
+```{r pca-summary, echo=FALSE}
 if (exists("msi_pca_loading_summary", inherits = TRUE) &&
     nrow(msi_pca_loading_summary) > 0) {
   knitr::kable(
@@ -316,13 +343,45 @@ Include any extra analyses not covered above, such as t‑SNE/UMAP,
 supervised classification, co‑localisation networks or annotation-based
 exploration. Create additional scripts as required and source them here.
 
-```{r extra-analysis, echo=TRUE, message=TRUE, warning=FALSE, eval=FALSE}
+```{r extra-analysis, echo=TRUE, message=FALSE, warning=FALSE, results='hide'}
 source("scripts/07_extra_analysis.R")
 ```
 
-```{r extra-analysis-output, echo=FALSE, results='asis', eval=FALSE}
+```{r extra-analysis-output, echo=FALSE, results='asis'}
 emit_extra_fig <- function(title, path) {
-  cat(sprintf("#### %s\n\n![](%s)\n\n", title, path))
+  if (is.null(path) || !file.exists(path)) return()
+  cat(sprintf("#### %s\n\n![](%s)\n\n", title, knitr::image_uri(path)))
+}
+if (!exists("msi_manifold_paths", inherits = TRUE) ||
+    length(msi_manifold_paths) == 0) {
+  extra_dir <- file.path("figures", "extra")
+  if (dir.exists(extra_dir)) {
+    tsne_files <- list.files(extra_dir, pattern = "_tsne\\.png$", full.names = TRUE)
+    umap_files <- list.files(extra_dir, pattern = "_umap\\.png$", full.names = TRUE)
+    all_ds <- unique(c(
+      gsub("_tsne\\.png$", "", basename(tsne_files)),
+      gsub("_umap\\.png$", "", basename(umap_files))
+    ))
+    if (length(all_ds) > 0) {
+      msi_manifold_paths <- purrr::map(purrr::set_names(all_ds), function(ds) {
+        list(
+          tsne = tsne_files[basename(tsne_files) == paste0(ds, "_tsne.png")][1],
+          umap = umap_files[basename(umap_files) == paste0(ds, "_umap.png")][1]
+        )
+      })
+    }
+  }
+}
+if (!exists("msi_network_paths", inherits = TRUE) ||
+    length(msi_network_paths) == 0) {
+  extra_dir <- file.path("figures", "extra")
+  if (dir.exists(extra_dir)) {
+    net_files <- list.files(extra_dir, pattern = "_network\\.png$", full.names = TRUE)
+    if (length(net_files) > 0) {
+      net_names <- gsub("_network\\.png$", "", basename(net_files))
+      msi_network_paths <- purrr::set_names(net_files, net_names)
+    }
+  }
 }
 if (exists("msi_manifold_paths", inherits = TRUE) &&
     length(msi_manifold_paths) > 0) {
