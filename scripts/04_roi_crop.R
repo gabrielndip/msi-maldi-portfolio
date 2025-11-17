@@ -15,6 +15,11 @@ suppressPackageStartupMessages({
   library(tidyverse)
   library(Cardinal)
 })
+use_furrr <- FALSE
+if (requireNamespace("furrr", quietly = TRUE) &&
+    requireNamespace("future", quietly = TRUE)) {
+  use_furrr <- TRUE
+}
 
 ## --------------------------------------------------------------------
 ## Configuration
@@ -83,7 +88,15 @@ crop_to_roi <- function(proc_msi, name, quantile = 0.25) {
 message("--- Cropping datasets to Region of Interest (ROI) ---")
 
 msi_roi <- list()
-msi_roi_summary <- purrr::imap_dfr(msi_preprocessed, function(proc_msi, name) {
+mapper <- purrr::imap
+cleanup_plan <- NULL
+if (length(msi_preprocessed) > 1 && use_furrr) {
+  mapper <- furrr::future_imap
+  cleanup_plan <- future::plan()
+  future::plan(future::multisession, workers = min(4, length(msi_preprocessed)))
+}
+
+msi_roi_summary <- mapper(msi_preprocessed, function(proc_msi, name) {
   cropped <- crop_to_roi(proc_msi, name, quantile = tic_quantile)
   msi_roi[[name]] <<- cropped
   tibble(
@@ -91,7 +104,12 @@ msi_roi_summary <- purrr::imap_dfr(msi_preprocessed, function(proc_msi, name) {
     processed_pixels = ncol(proc_msi),
     roi_pixels = if (!is.null(cropped)) ncol(cropped) else NA_integer_
   )
-})
+}) %>%
+  list_rbind()
+
+if (!is.null(cleanup_plan)) {
+  future::plan(cleanup_plan)
+}
 
 # Assign new objects to the global environment.
 list2env(msi_roi, envir = .GlobalEnv)

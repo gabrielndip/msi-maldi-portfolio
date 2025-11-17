@@ -14,6 +14,11 @@ suppressPackageStartupMessages({
   library(Cardinal)
   library(tidyverse)
 })
+use_furrr <- FALSE
+if (requireNamespace("furrr", quietly = TRUE) &&
+    requireNamespace("future", quietly = TRUE)) {
+  use_furrr <- TRUE
+}
 
 ## --------------------------------------------------------------------
 ## Configuration & Setup
@@ -224,7 +229,15 @@ msi_manifold_paths <- list()
 msi_classifier_summary <- list()
 msi_network_paths <- list()
 
-purrr::imap(data_list, function(msi_obj, name) {
+mapper <- purrr::imap
+cleanup_plan <- NULL
+if (length(data_list) > 1 && use_furrr) {
+  mapper <- furrr::future_imap
+  cleanup_plan <- future::plan()
+  future::plan(future::multisession, workers = min(4, length(data_list)))
+}
+
+mapper(data_list, function(msi_obj, name) {
   message(sprintf("\n--- Starting extra analysis for: %s ---", name))
   
   # Extract features and labels
@@ -255,6 +268,10 @@ purrr::imap(data_list, function(msi_obj, name) {
     msi_network_paths[[name]] <<- net$path
   }
 })
+
+if (!is.null(cleanup_plan)) {
+  future::plan(cleanup_plan)
+}
 
 # Save results to the global environment.
 assign("msi_classifiers", classifiers, envir = .GlobalEnv)

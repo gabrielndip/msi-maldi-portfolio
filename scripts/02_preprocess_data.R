@@ -19,6 +19,11 @@ suppressPackageStartupMessages({
   library(tidyverse)
   library(Cardinal)
 })
+use_furrr <- FALSE
+if (requireNamespace("furrr", quietly = TRUE) &&
+    requireNamespace("future", quietly = TRUE)) {
+  use_furrr <- TRUE
+}
 
 ## --------------------------------------------------------------------
 ## Setup
@@ -64,14 +69,30 @@ preprocess_msi <- function(msi) {
 
 message("--- Preprocessing datasets ---")
 
-# Apply the preprocessing pipeline to each dataset.
-msi_preprocessed <- msi_data %>%
-  purrr::imap(~{
-    message("Processing: ", .y)
-    preprocess_msi(.x)
-  }) %>%
+# Apply the preprocessing pipeline to each dataset. Parallelize when
+# multiple datasets are present and furrr/future are available; otherwise
+# fall back to sequential processing.
+mapper <- purrr::imap
+cleanup_plan <- NULL
+if (length(msi_data) > 1 && use_furrr) {
+  mapper <- furrr::future_imap
+  cleanup_plan <- future::plan()
+  future::plan(
+    future::multisession,
+    workers = min(4, length(msi_data))
+  )
+}
+
+msi_preprocessed <- mapper(msi_data, ~{
+  message("Processing: ", .y)
+  preprocess_msi(.x)
+}) %>%
   # Append _proc suffix to names to distinguish from raw data.
   set_names(~ paste0(names(msi_data), "_proc"))
+
+if (!is.null(cleanup_plan)) {
+  future::plan(cleanup_plan)
+}
 
 # Assign processed datasets into the global environment.
 list2env(msi_preprocessed, envir = .GlobalEnv)

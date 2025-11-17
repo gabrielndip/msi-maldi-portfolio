@@ -13,6 +13,11 @@ suppressPackageStartupMessages({
   library(tidyverse)
   library(Cardinal)
 })
+use_furrr <- FALSE
+if (requireNamespace("furrr", quietly = TRUE) &&
+    requireNamespace("future", quietly = TRUE)) {
+  use_furrr <- TRUE
+}
 
 ## --------------------------------------------------------------------
 ## Configuration
@@ -39,11 +44,29 @@ if (length(imzml_files) == 0) {
   stop("No .imzML files were found in the 'data' directory.")
 }
 
+# Decide whether to load files in parallel. If there is more than one dataset
+# and furrr/future are available, spawn a small multisession pool; otherwise
+# fall back to sequential purrr::map to keep dependencies minimal.
+mapper <- purrr::map
+cleanup_plan <- NULL
+if (length(imzml_files) > 1 && use_furrr) {
+  mapper <- furrr::future_map
+  cleanup_plan <- future::plan()
+  future::plan(
+    future::multisession,
+    workers = min(4, length(imzml_files))
+  )
+}
+
 # Load each imzML/ibd pair into an MSImageSet object.
 # The .ibd file is automatically detected by Cardinal.
 msi_data <- imzml_files %>%
   set_names(nm = ~ tools::file_path_sans_ext(basename(.))) %>%
-  map(readMSIData)
+  mapper(readMSIData)
+
+if (!is.null(cleanup_plan)) {
+  future::plan(cleanup_plan)
+}
 
 # Assign each data object into the global environment for convenience.
 list2env(msi_data, envir = .GlobalEnv)

@@ -17,6 +17,11 @@ suppressPackageStartupMessages({
   library(httr)
   library(jsonlite)
 })
+use_furrr <- FALSE
+if (requireNamespace("furrr", quietly = TRUE) &&
+    requireNamespace("future", quietly = TRUE)) {
+  use_furrr <- TRUE
+}
 
 ## --------------------------------------------------------------------
 ## Configuration
@@ -159,7 +164,15 @@ message("Starting annotation... (This is a demonstration and will not perform li
 # The `query_metlin` function is a placeholder.
 # To perform real annotation, you would replace it with a call to a real annotation package or API.
 
-all_annotations <- purrr::map_dfr(significant_mz, function(mz) {
+mapper <- purrr::map_dfr
+cleanup_plan <- NULL
+if (length(significant_mz) > 1 && use_furrr) {
+  mapper <- furrr::future_map_dfr
+  cleanup_plan <- future::plan()
+  future::plan(future::multisession, workers = min(4, length(significant_mz)))
+}
+
+all_annotations <- mapper(significant_mz, function(mz) {
   purrr::map_dfr(adducts_to_search, function(adduct) {
     # In a real run, this function would make a web request.
     # query_metlin(mz, mass_tolerance_ppm, adduct)
@@ -171,6 +184,10 @@ all_annotations <- purrr::map_dfr(significant_mz, function(mz) {
     tibble()
   })
 })
+
+if (!is.null(cleanup_plan)) {
+  future::plan(cleanup_plan)
+}
 
 
 ## --------------------------------------------------------------------

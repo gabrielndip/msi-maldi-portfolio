@@ -19,6 +19,11 @@ suppressPackageStartupMessages({
   library(tidyverse)
   library(Cardinal)
 })
+use_furrr <- FALSE
+if (requireNamespace("furrr", quietly = TRUE) &&
+    requireNamespace("future", quietly = TRUE)) {
+  use_furrr <- TRUE
+}
 
 ## --------------------------------------------------------------------
 ## Configuration
@@ -82,7 +87,15 @@ ensure_pca_baseline <- function(dataset_name, msi_obj, ncomp = max(comparison_k,
 message(sprintf("Performing SSC segmentation for k = %s...", paste(k_range, collapse = ", ")))
 
 msi_ssc <- list()
-purrr::iwalk(segmentation_input, function(msi_obj, name) {
+mapper <- purrr::iwalk
+cleanup_plan <- NULL
+if (length(segmentation_input) > 1 && use_furrr) {
+  mapper <- furrr::future_iwalk
+  cleanup_plan <- future::plan()
+  future::plan(future::multisession, workers = min(4, length(segmentation_input)))
+}
+
+mapper(segmentation_input, function(msi_obj, name) {
   msi_ssc[[name]] <<- list()
   for (k in k_range) {
     message(sprintf("  Applying SSC to '%s' (k = %d)...", name, k))
@@ -187,6 +200,10 @@ purrr::iwalk(segmentation_input, function(msi_obj, name) {
   )
   msi_segmentation_overview[[name]] <<- comparison_row
 })
+
+if (!is.null(cleanup_plan)) {
+  future::plan(cleanup_plan)
+}
 
 # --- Save results to environment ---
 assign("msi_ssc", msi_ssc, envir = .GlobalEnv)

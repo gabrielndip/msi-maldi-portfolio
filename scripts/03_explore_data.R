@@ -19,6 +19,11 @@ suppressPackageStartupMessages({
   library(tidyverse)
   library(Cardinal)
 })
+use_furrr <- FALSE
+if (requireNamespace("furrr", quietly = TRUE) &&
+    requireNamespace("future", quietly = TRUE)) {
+  use_furrr <- TRUE
+}
 
 ## --------------------------------------------------------------------
 ## Configuration
@@ -161,13 +166,22 @@ save_spatial_panel <- function(msi_obj, dataset_name, n = 3) {
 msi_qc_plots <- list()
 msi_qc_spatial_features <- list()
 
-for (name in names(msi_data)) {
-  raw_msi <- msi_data[[name]]
+mapper <- purrr::imap
+cleanup_plan <- NULL
+if (length(msi_data) > 1 && use_furrr) {
+  mapper <- furrr::future_imap
+  cleanup_plan <- future::plan()
+  future::plan(future::multisession, workers = min(4, length(msi_data)))
+}
+
+mapper(msi_data, ~{
+  name <- .y
+  raw_msi <- .x
   proc_name <- paste0(name, "_proc")
   
   if (!proc_name %in% names(msi_preprocessed)) {
     warning("No processed dataset found for ", name, " – skipping QC.")
-    next
+    return(NULL)
   }
   proc_msi <- msi_preprocessed[[proc_name]]
   
@@ -178,16 +192,20 @@ for (name in names(msi_data)) {
     spectra_path <- save_spectra_panel(raw_msi, proc_msi, name)
     spatial_info <- save_spatial_panel(proc_msi, name, n = N_SPATIAL_FEATURES)
     
-    msi_qc_plots[[name]] <- list(
+    msi_qc_plots[[name]] <<- list(
       tic = tic_path,
       spectra = spectra_path,
       spatial = spatial_info$path
     )
-    msi_qc_spatial_features[[name]] <- spatial_info$spatial_mz
+    msi_qc_spatial_features[[name]] <<- spatial_info$spatial_mz
     
   }, error = function(e) {
     warning(sprintf("Failed to generate QC plots for %s: %s", name, e$message))
   })
+})
+
+if (!is.null(cleanup_plan)) {
+  future::plan(cleanup_plan)
 }
 
 message("\nExploratory analysis complete. QC plots saved to 'figures/qc/'.")

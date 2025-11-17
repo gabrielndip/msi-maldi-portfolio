@@ -16,6 +16,11 @@ suppressPackageStartupMessages({
   library(tidyverse)
   library(Cardinal)
 })
+use_furrr <- FALSE
+if (requireNamespace("furrr", quietly = TRUE) &&
+    requireNamespace("future", quietly = TRUE)) {
+  use_furrr <- TRUE
+}
 
 ### Configuration
 # Set the number of principal components to calculate.
@@ -97,7 +102,15 @@ render_pca_loadings <- function(pca_result, dataset_name, outfile) {
 }
 
 # Iterate over each dataset in the selected list.
-purrr::imap(data_list, function(msi_obj, name) {
+mapper <- purrr::imap
+cleanup_plan <- NULL
+if (length(data_list) > 1 && use_furrr) {
+  mapper <- furrr::future_imap
+  cleanup_plan <- future::plan()
+  future::plan(future::multisession, workers = min(4, length(data_list)))
+}
+
+mapper(data_list, function(msi_obj, name) {
   message(sprintf("Performing PCA on dataset '%s'...", name))
   
   # Perform PCA. Return a PCA2 object.
@@ -139,6 +152,10 @@ purrr::imap(data_list, function(msi_obj, name) {
     warning(sprintf("Could not plot PCA loadings for dataset '%s': %s", name, e$message))
   })
 })
+
+if (!is.null(cleanup_plan)) {
+  future::plan(cleanup_plan)
+}
 
 # Assign the list of PCA results to the global environment.
 assign("msi_pca", msi_pca, envir = .GlobalEnv)
